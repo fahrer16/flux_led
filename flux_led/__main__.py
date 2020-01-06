@@ -514,9 +514,11 @@ class WifiLedBulb():
         self._query_len = 0
         self._use_csum = True
 
+        self._rgbw = (0, 0, 0, 0)
+        self._brightness = 0
+
         self.connect(2)
         self.update_state()
-
 
     @property
     def is_on(self):
@@ -547,11 +549,7 @@ class WifiLedBulb():
         For warm white return current led level. For RGB
         calculate the HSV and return the 'value'.
         """
-        if self.mode == "ww":
-            return int(self.raw_state[9])
-        else:
-            _, _, v = colorsys.rgb_to_hsv(*self.getRgb())
-            return v
+        return self._brightness
 
     def connect(self, retry=0):
         self.close()
@@ -591,7 +589,6 @@ class WifiLedBulb():
             mode = BuiltInTimer.valtostr(pattern_code)
         return mode
 
- 
     def _determine_query_len(self, retry = 2):
 
         # determine the type of protocol based of first 2 bytes.
@@ -614,7 +611,6 @@ class WifiLedBulb():
         if rx == None and retry > 0:
             self._determine_query_len(max(retry -1,0))
         
- 
     def query_state(self, retry=2, led_type = None):
         if self._query_len == 0:
             self._determine_query_len()
@@ -642,7 +638,6 @@ class WifiLedBulb():
                 return rx
             return self.query_state(max(retry-1, 0), led_type)
         return rx
-
 
     def update_state(self, retry=2 ):
         rx = self.query_state(retry)
@@ -712,6 +707,13 @@ class WifiLedBulb():
             self.protocol = "LEDENET_ORIGINAL"
             self._use_csum = False
 
+        self._rgbw = (
+            rx[6],
+            rx[7],
+            rx[8],
+            rx[9]
+        )
+        rgb = self._rgbw[:3]
         pattern = rx[3]
         ww_level = rx[9]
         mode = self._determineMode(ww_level, pattern)
@@ -720,21 +722,29 @@ class WifiLedBulb():
                 return
             self.update_state(max(retry-1, 0))
             return
-        power_state = rx[2]
 
+        self._mode = mode
+
+        power_state = rx[2]
         if power_state == 0x23:
             self._is_on = True
         elif power_state == 0x24:
             self._is_on = False
+
+        if mode == "ww":
+            self._brightness = rgb
+        else:
+            _, _, v = colorsys.rgb_to_hsv(*rgb)
+            self._brightness = v
+
         self.raw_state = rx
-        self._mode = mode
 
     def __str__(self):
         rx = self.raw_state
         mode = self.mode
 
+        r, g, b, ww_level = self._rgbw
         pattern = rx[3]
-        ww_level = rx[9]
         power_state = rx[2]
         power_str = "Unknown power state"
 
@@ -746,12 +756,9 @@ class WifiLedBulb():
         delay = rx[5]
         speed = utils.delayToSpeed(delay)
         if mode == "color":
-            red = rx[6]
-            green = rx[7]
-            blue = rx[8]
-            mode_str = "Color: {}".format((red, green, blue))
+            mode_str = "Color: {}".format((r, g, b))
             if self.rgbwcapable:
-                mode_str += " White: {}".format(rx[9])
+                mode_str += " White: {}".format(ww_level)
             else:
                 mode_str += " Brightness: {}".format(self.brightness)
         elif mode == "ww":
@@ -771,7 +778,6 @@ class WifiLedBulb():
         for _r in rx:
           mode_str += str(_r) + ","
         return "{} [{}]".format(power_str, mode_str)
-
 
     def _change_state(self, retry, turn_on = True):
 
@@ -796,7 +802,6 @@ class WifiLedBulb():
                 return
             self._is_on = False
 
-
     def turnOn(self, retry=2):
         self._is_on = True
         self._change_state(retry, turn_on = True)
@@ -804,7 +809,6 @@ class WifiLedBulb():
     def turnOff(self, retry=2):
         self._is_on = False
         self._change_state(retry, turn_on = False)
-
 
     def isOn(self):
         return self.is_on
@@ -826,8 +830,7 @@ class WifiLedBulb():
     def setColdWhite255(self, level, persist=True, retry=2):
         self.setRgbw(persist=persist, brightness=None, retry=retry, w2=level)
 
-    def setWhiteTemperature(self, temperature, brightness, persist=True,
-                            retry=2):
+    def setWhiteTemperature(self, temperature, brightness, persist=True, retry=2):
         # Assume output temperature of between 2700 and 6500 Kelvin, and scale
         # the warm and cold LEDs linearly to provide that
         temperature = max(temperature-2700, 0)
@@ -840,29 +843,20 @@ class WifiLedBulb():
     def getRgbw(self):
         if self.mode != "color":
             return (255, 255, 255, 255)
-        red = self.raw_state[6]
-        green = self.raw_state[7]
-        blue = self.raw_state[8]
-        white = self.raw_state[9]
-        return (red, green, blue, white)
+        return self._rgbw
     
     def getRgbww(self):
         if self.mode != "color":
             return (255, 255, 255, 255, 255)
-        red = self.raw_state[6]
-        green = self.raw_state[7]
-        blue = self.raw_state[8]
-        white = self.raw_state[9]
         white2 = self.raw_state[11]
-        return (red, green, blue, white, white2)
+        return (*self._rgbw, white2)
 
     def getSpeed(self):
         delay = self.raw_state[5]
         speed = utils.delayToSpeed(delay)
         return speed
 
-    def setRgbw(self, r=None, g=None, b=None, w=None, persist=True,
-                brightness=None, retry=2, w2=None):
+    def setRgbw(self, r=None, g=None, b=None, w=None, persist=True, brightness=None, retry=2, w2=None):
 
         if (r or g or b) and (w or w2) and not self.rgbwcapable:
             print("RGBW command sent to non-RGBW device")
@@ -918,8 +912,9 @@ class WifiLedBulb():
         #  persistence (31 for true / 41 for false)
         #
 
-        if brightness != None:
+        if brightness:
             (r, g, b) = self._calculateBrightness((r, g, b), brightness)
+            self._brightness = brightness
 
         # The original LEDENET protocol
         if self.protocol == 'LEDENET_ORIGINAL':
@@ -937,22 +932,10 @@ class WifiLedBulb():
             else:
                 msg = bytearray([0x41])
 
-            if r is not None:
-                msg.append(int(r))
-            else:
-                msg.append(int(0))
-            if g is not None:
-                msg.append(int(g))
-            else:
-                msg.append(int(0))
-            if b is not None:
-                msg.append(int(b))
-            else:
-                msg.append(int(0))
-            if w is not None:
-                msg.append(int(w))
-            else:
-                msg.append(int(0))
+            msg.append(int(r or 0))
+            msg.append(int(g or 0))
+            msg.append(int(b or 0))
+            msg.append(int(w or 0))
 
             if self.protocol == "LEDENET":
                 # LEDENET devices support two white outputs for cold and warm. We set
@@ -972,9 +955,13 @@ class WifiLedBulb():
                 if w is None and w2 is None:
                     # Mask out whites
                     write_mask |= 0xf0
+                    self._rgbw = (r or 0, g or 0, b or 0, self._rgbw[3])
                 elif r is None and g is None and b is None:
                     # Mask out colors
                     write_mask |= 0x0f
+                    self._rgbw = w or 0
+            else:
+                self._rgbw = (*self._rgbw[:3], w or 0)
 
             msg.append(write_mask)
 
@@ -991,12 +978,7 @@ class WifiLedBulb():
                              retry=max(retry-1, 0), w2=w2)
 
     def getRgb(self):
-        if self.mode != "color":
-            return (255, 255, 255)
-        red = self.raw_state[6]
-        green = self.raw_state[7]
-        blue = self.raw_state[8]
-        return (red, green, blue)
+        return self.getRgbw()[:3]
 
     def setRgb(self, r,g,b, persist=True, brightness=None, retry=2):
         self.setRgbw(r, g, b, persist=persist, brightness=brightness,
