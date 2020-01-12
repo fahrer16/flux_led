@@ -693,8 +693,8 @@ class WifiLedBulb():
             rx[1] == 0x25 or
             rx[1] == 0x33 or
             rx[1] == 0x81 or
-            rx[1] == 0x44 or
-            rx[1] == 0x35): #BF Added 12Jan2020, packet capture from BR30 bulbs from Amazon
+            rx[1] == 0x44):# or
+            #rx[1] == 0x35): #BF Added 12Jan2020, packet capture from BR30 bulbs from Amazon
             self.rgbwcapable = True
 
         # Devices that use an 8-byte protocol
