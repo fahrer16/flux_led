@@ -505,6 +505,7 @@ class WifiLedBulb():
         self.protocol = None
         self.rgbwcapable = False
         self.rgbwprotocol = False
+        self.flux_led_version = 0.25
 
         self.raw_state = None
         self._is_on = False
